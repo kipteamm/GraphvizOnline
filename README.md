@@ -1,6 +1,12 @@
 # Introduction
 
+**All credits of this project go to the original author and contributors**
+
 Author: [dreampuf](https://github.com/dreampuf/)
+Edited by: [kipteam](https://github.com/kipteamm/)
+
+I repurposed the project to allow for path traversel in the case of using a dot diagram that represents any Automata in computer science theory. 
+A comma separated list of symbols can be inputted to get a visual of traversed paths in the diagram.
 
 [GraphvizOnline](https://github.com/dreampuf/GraphvizOnline) lets you edit and view [GraphViz](http://www.graphviz.org/) diagrams online. You can [use GraphvizOnline online here](http://dreampuf.github.io/GraphvizOnline/).
 

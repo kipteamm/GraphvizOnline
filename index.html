@@ -369,49 +369,59 @@
 }</pre>
   <div id="splitter"></div>
   <div id="options">
-    <label id="engine">
-      Engine:
-      <select>
-        <option>circo</option>
-        <option selected="">dot</option>
-        <option>fdp</option>
-        <option>nop</option>
-        <option>nop2</option>
-        <option>neato</option>
-        <option>sfdp</option>
-        <option>twopi</option>
-        <option>osage</option>
-        <option>patchwork</option>
-      </select>
-    </label>
+    <div style="display: none">
 
-    <label id="format">
-      Format:
-      <select>
-        <option selected="">svg</option>
-        <option>png</option>
-        <option>json</option>
-        <option>xdot</option>
-        <option>plain</option>
-        <option>ps</option>
-      </select>
-    </label>
+      <label id="engine">
+        Engine:
+        <select>
+          <option>circo</option>
+          <option selected="">dot</option>
+          <option>fdp</option>
+          <option>nop</option>
+          <option>nop2</option>
+          <option>neato</option>
+          <option>sfdp</option>
+          <option>twopi</option>
+          <option>osage</option>
+          <option>patchwork</option>
+        </select>
+      </label>
+  
+      <label id="format">
+        Format:
+        <select>
+          <option selected="">svg</option>
+          <option>png</option>
+          <option>json</option>
+          <option>xdot</option>
+          <option>plain</option>
+          <option>ps</option>
+        </select>
+      </label>
+  
+      <label id="raw" class="disabled">
+        <input type="checkbox" disabled=""> Show raw output
+      </label>
+  
+      <label>
+        <a href="#" target="_blank" id="download">Download</a>
+      </label>
+  
+      <label>
+        <input type="button" value="Share" id="share">
+      </label>
+  
+      <input type="input" value="" id="shareurl">
+    </div>
 
-    <label id="raw" class="disabled">
-      <input type="checkbox" disabled=""> Show raw output
-    </label>
+    <input type="text" id="tokens" placeholder="KEYWORD, IDENTIFIER ..." value="KEYWORD,IDENTIFIER,DELIMITER" style="width: 35%">
+    <input type="button" value="Show" onclick="getInput();">
+    <input type="button" value="Parse" onclick="parseInput()">
 
-    <label>
-      <a href="#" target="_blank" id="download">Download</a>
-    </label>
-
-    <label>
-      <input type="button" value="Share" id="share">
-    </label>
-
-    <input type="input" value="" id="shareurl">
-
+    <div id="path-results"></div>
   </div>
+
+
   <div id="review">
     <div id="error"></div>
   </div>
@@ -554,7 +564,7 @@
       }
     }
 
-    (function (document) {
+    // (function (document) {
       //http://stackoverflow.com/a/10372280/398634
       window.URL = window.URL || window.webkitURL;
       var el_stetus = document.getElementById("status"),
@@ -573,6 +583,231 @@
         shareEl = document.querySelector("#share"),
         shareURLEl = document.querySelector("#shareurl"),
         errorEl = document.querySelector("#error");
+
+      let start;
+      // A: [0, 0]
+      let transitions;
+      let value;
+      let finalStates;
+
+      const edgeRegex = /^(\w+)\s*->\s*(\w+)\s*\[.*label="([^\/]+)\/.*"\]/;
+      const stateRegex = /^(\w+)\s\[shape=(.*),.*/;
+
+      function parseInput() {
+        value = editor.getSession().getDocument().getValue();
+        const lines = value.split(/\r?\n/);
+        transitions = {};
+        finalStates = new Set()
+        start = null;
+
+        for (let raw of lines) {
+          const line = raw.trim();
+          if (!line) continue;
+
+          if (line.startsWith("start ->")) {
+            const m = line.match(/^start\s*->\s*(\w+)/);
+            if (m) start = m[1];
+            continue;
+          }
+
+          const stateMatch = line.match(stateRegex);
+          if (stateMatch) {
+            const [_, state, shape] = stateMatch;
+            if (shape === "doublecircle") finalStates.add(state);
+
+            continue;
+          }
+
+          const edgeMatch = line.match(edgeRegex);
+          if (!edgeMatch) continue;
+
+          const [_, from, to, symbol] = edgeMatch;
+
+          if (!transitions[from]) transitions[from] = [];
+          transitions[from].push({ symbol, to });
+        }
+
+        console.log("parsed");
+      }
+
+      function epsilonClosure(states) {
+        const stack = [...states];
+        const visited = new Set(states);
+
+        while (stack.length > 0) {
+          const s = stack.pop();
+
+          for (const t of transitions[s] || []) {
+            if (t.symbol === "UNKNOWN" && !visited.has(t.to)) {
+              visited.add(t.to);
+              stack.push(t.to);
+            }
+          }
+        }
+
+        return [...visited];
+      }
+
+      function expandEpsilons(nodes) {
+        const result = [];
+        const visited = new Map(); // state -> best path so far
+
+        const stack = [...nodes];
+
+        for (const n of nodes) {
+          visited.set(n.state, n.path);
+        }
+
+        while (stack.length > 0) {
+          const node = stack.pop();
+          const state = node.state;
+
+          result.push(node);
+
+          for (const t of transitions[state] || []) {
+            if (t.symbol === "UNKNOWN") {
+              const nextPath = [...node.path, { from: state, to: t.to, token: "ε" }];
+
+              if (!visited.has(t.to)) {
+                visited.set(t.to, nextPath);
+                stack.push({ state: t.to, path: nextPath });
+              }
+            }
+          }
+        }
+
+        return result;
+      }
+
+      function getAllPaths(tokens) {
+        // Frontier nodes are { state, path[] }
+        let frontier = [{ state: start, path: [] }];
+
+        // Expand initial ε-transitions
+        frontier = expandEpsilons(frontier);
+
+        const completed = [];
+
+        for (const token of tokens) {
+          const next = [];
+
+          for (const node of frontier) {
+            const state = node.state;
+
+            for (const t of transitions[state] || []) {
+              if (t.symbol === token) {
+                next.push({
+                  state: t.to,
+                  path: [...node.path, { from: state, to: t.to, token }]
+                });
+              }
+            }
+          }
+
+          if (next.length === 0) break;
+
+          // Expand ε after consuming the token
+          frontier = expandEpsilons(next);
+        }
+
+        for (const node of frontier) {
+          node.path.final = finalStates.has(node.path[node.path.length - 1].to);
+          completed.push(node.path);
+        }
+
+        return completed;
+      }
+
+      
+      function colorForPath(path) {
+        // Rough but stable: hash the full path string
+        const key = path.map(e => `${e.from}-${e.to}-${e.token}`).join("|");
+
+        let hash = 0;
+        for (let i = 0; i < key.length; i++) {
+          hash = (hash * 131 + key.charCodeAt(i)) >>> 0;
+        }
+
+        // Extract a non-ugly RGB from the hash
+        const r = (hash & 0xFF0000) >> 16;
+        const g = (hash & 0x00FF00) >> 8;
+        const b = (hash & 0x0000FF);
+
+        // Boost lower values so colours don't vanish into grayscale sadness
+        const lift = v => Math.max(v, 60);
+
+        return (
+          "#" +
+          lift(r).toString(16).padStart(2, "0") +
+          lift(g).toString(16).padStart(2, "0") +
+          lift(b).toString(16).padStart(2, "0")
+        );
+      }
+
+      function mapEdgesToColors(paths) {
+        const colors = new Map();
+
+        for (const path of paths) {
+          const col = colorForPath(path);
+
+          for (const e of path) {
+            const key = `${e.from}->${e.to}`;
+
+            if (!colors.has(key)) colors.set(key, new Set());
+            colors.get(key).add({
+              color: col,
+              final: !!path.final
+            });
+          }
+        }
+
+        return colors;
+      }
+
+      function pickEdgeColor(setOfColors) {
+        return [...setOfColors][0];
+      }
+
+      function parse(tokens) {
+        if (!transitions) parseInput();
+
+        const paths = getAllPaths(tokens);
+        const edgeColors = mapEdgesToColors(paths);
+
+        const pathResults = document.getElementById("path-results");
+        let longestPath = 0;
+
+        for (const path of paths) {
+          if (path.length < longestPath) continue;
+          longestPath = path.length;
+        }
+        const totalPaths = longestPath? paths.length: 0;
+
+        pathResults.innerHTML = `Longest path: <b>${longestPath}</b><br>Total paths: <b>${totalPaths}</b><br>`;
+        pathResults.innerHTML += tokens.splice(longestPath).join(", ");
+
+        console.log(paths);
+
+        if (!totalPaths) return;
+
+        editor.getSession().getDocument().setValue(
+          value.replace(/(\w+)\s*->\s*(\w+)\s*\[/g, (m, a, b) => {
+            const key = `${a}->${b}`;
+            if (!edgeColors.has(key)) return m;
+
+            const { color, final } = pickEdgeColor(edgeColors.get(key));
+            return `${a} -> ${b} [color="${color}", penwidth=${final? 8: 4}, fontcolor="${color}", `;
+          })
+        );
+      }
+
+      function getInput() {
+        const elm = document.getElementById('tokens');
+        const value = elm.value.replaceAll(/\r?\n/g, "").replaceAll(" ", "").replaceAll("WHITESPACE,", "").replaceAll("WHITESPACE", "").replace(/,$/, "");
+        elm.value = value;
+
+        parse(value.split(','))
+      }
 
       function show_status(text, hide) {
         hide = hide || 0;
@@ -713,6 +948,7 @@
       }
 
       function updateState() {
+        return;
         const updatedUrl = new URL(window.location)
         // Hash
         const content = encodeURIComponent(editor.getSession().getDocument().getValue());
@@ -882,7 +1118,7 @@
         renderGraph();
       }
 
-    })(document);
+    // })(document);
   </script>
 </body>
 
